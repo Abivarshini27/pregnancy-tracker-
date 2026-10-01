@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import './App.css'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
+const API_URL = import.meta.env.VITE_API_URL
+  || (import.meta.env.PROD ? 'https://pregnancy-tracker-api-8vs4.onrender.com' : 'http://localhost:8080')
 
 const request = async (path, options = {}) => {
   const token = sessionStorage.getItem('pregnancy_tracker_token')
