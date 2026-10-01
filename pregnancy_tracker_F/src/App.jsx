@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import './App.css'
+import { calculateChecklistProgress, toggleChecklistItem } from './checklistUtils'
+import { getUnreadNotificationCount, markNotificationAsRead } from './notificationUtils'
 
 const API_URL = import.meta.env.VITE_API_URL
   || (import.meta.env.PROD ? 'https://pregnancy-tracker-api-8vs4.onrender.com' : 'http://localhost:8080')
@@ -54,12 +56,57 @@ const getBabySize = (week) => babySizeByWeek.reduce(
   babySizeByWeek[0],
 )
 
-const checklist = [
-  'Drink 8+ glasses of water',
-  'Walk for 20 minutes today',
-  'Take prenatal vitamin',
-  'Track baby kicks before bed',
+const defaultCareChecklist = [
+  { id: 1, text: 'Drink 8+ glasses of water', checked: true },
+  { id: 2, text: 'Walk for 20 minutes today', checked: false },
+  { id: 3, text: 'Take prenatal vitamin', checked: true },
+  { id: 4, text: 'Track baby kicks before bed', checked: false },
 ]
+
+const defaultMealPlan = [
+  { id: 1, title: 'Breakfast', meal: 'Greek yogurt bowl with berries', checked: true },
+  { id: 2, title: 'Lunch', meal: 'Quinoa salad with chickpeas', checked: false },
+  { id: 3, title: 'Dinner', meal: 'Salmon with roasted veggies', checked: false },
+  { id: 4, title: 'Snack', meal: 'Banana and almond butter', checked: true },
+]
+
+const defaultMedications = []
+
+const hospitalBagDefaults = [
+  { id: 1, category: 'Documents', text: 'Photo ID and insurance card', packed: false },
+  { id: 2, category: 'Documents', text: 'Prenatal records and birth plan', packed: false },
+  { id: 3, category: 'For me', text: 'Comfortable clothes and going-home outfit', packed: false },
+  { id: 4, category: 'For me', text: 'Toiletries and phone charger', packed: false },
+  { id: 5, category: 'For baby', text: 'Going-home outfit and blanket', packed: false },
+  { id: 6, category: 'For baby', text: 'Diapers and wipes', packed: false },
+]
+
+const hospitalBagCategories = ['Documents', 'For me', 'For baby', 'Extras']
+
+const appointmentQuestionCategories = ['Symptoms', 'Medication', 'Birth plan', 'Other']
+
+const defaultBirthPreferences = {
+  supportPerson: '',
+  laborPreferences: '',
+  feedingPlan: 'Undecided',
+  notes: '',
+}
+
+const defaultNotifications = [
+  { id: 1, title: 'Hydration reminder', detail: 'Drink a glass of water before lunch.', time: 'Today, 9:00 AM', read: false },
+  { id: 2, title: 'Prenatal reminder', detail: 'Take your vitamins with breakfast.', time: 'Today, 8:15 AM', read: true },
+  { id: 3, title: 'Appointment alert', detail: 'Your check-in call is in 2 days.', time: 'Tomorrow', read: false },
+]
+
+const moodOptions = [
+  { value: 'Happy', emoji: '😊', color: 'happy' },
+  { value: 'Calm', emoji: '😌', color: 'calm' },
+  { value: 'Tired', emoji: '😴', color: 'tired' },
+  { value: 'Anxious', emoji: '😟', color: 'anxious' },
+  { value: 'Excited', emoji: '🤩', color: 'excited' },
+]
+
+const defaultMood = { value: 'Calm', emoji: '😌', text: 'Feeling steady and relaxed today.' }
 
 const timeline = [
   { week: '22', title: 'Movement check-in', status: 'Completed' },
@@ -139,6 +186,36 @@ const formatAppointmentTime = (date) => date.toLocaleTimeString('en-US', {
   hour12: true,
 })
 
+const getDateKey = (value = new Date()) => {
+  const date = new Date(value)
+  date.setHours(0, 0, 0, 0)
+  return date.toISOString().slice(0, 10)
+}
+
+const formatDuration = (totalSeconds) => {
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+const buildDefaultDayData = () => ({
+  entries: initialEntries,
+  waterCount: 6,
+  kickCount: 8,
+  movementSessions: [],
+  contractions: [],
+  sleepHours: '7h 42m',
+  nutrition: nutritionGoals,
+  journal: journalEntries,
+  appointments: appointments,
+  careChecklist: defaultCareChecklist,
+  meals: defaultMealPlan,
+  medications: defaultMedications,
+  notifications: defaultNotifications,
+  mood: defaultMood,
+  profile: { week: '24', dueDate: '2027-04-18' },
+})
+
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [formMode, setFormMode] = useState('login')
@@ -151,6 +228,11 @@ function App() {
   const [entries, setEntries] = useState(initialEntries)
   const [waterCount, setWaterCount] = useState(6)
   const [kickCount, setKickCount] = useState(8)
+  const [movementSessions, setMovementSessions] = useState([])
+  const [activeMovementSession, setActiveMovementSession] = useState(null)
+  const [contractionHistory, setContractionHistory] = useState([])
+  const [activeContraction, setActiveContraction] = useState(null)
+  const [contractionNow, setContractionNow] = useState(Date.now())
   const [sleepHours, setSleepHours] = useState('7h 42m')
   const [nutritionData, setNutritionData] = useState(nutritionGoals)
   const [journalData, setJournalData] = useState(journalEntries)
@@ -159,6 +241,25 @@ function App() {
   const [appointmentData, setAppointmentData] = useState(appointments)
   const [appointmentForm, setAppointmentForm] = useState({ title: '', date: '', time: '' })
   const [appointmentError, setAppointmentError] = useState('')
+  const [appointmentQuestions, setAppointmentQuestions] = useState([])
+  const [appointmentQuestionInput, setAppointmentQuestionInput] = useState('')
+  const [appointmentQuestionCategory, setAppointmentQuestionCategory] = useState('Other')
+  const [careChecklist, setCareChecklist] = useState(defaultCareChecklist)
+  const [careChecklistInput, setCareChecklistInput] = useState('')
+  const [mealPlan, setMealPlan] = useState(defaultMealPlan)
+  const [medications, setMedications] = useState(defaultMedications)
+  const [medicationForm, setMedicationForm] = useState({ name: '', dose: '', time: '' })
+  const [hospitalBag, setHospitalBag] = useState(hospitalBagDefaults)
+  const [hospitalBagInput, setHospitalBagInput] = useState('')
+  const [hospitalBagCategory, setHospitalBagCategory] = useState('Extras')
+  const [babyNames, setBabyNames] = useState([])
+  const [babyNameForm, setBabyNameForm] = useState({ name: '', note: '' })
+  const [birthPreferences, setBirthPreferences] = useState(defaultBirthPreferences)
+  const [notifications, setNotifications] = useState(defaultNotifications)
+  const [showNotifications, setShowNotifications] = useState(false)
+  const [mood, setMood] = useState(defaultMood)
+  const [selectedDate, setSelectedDate] = useState(getDateKey())
+  const [trackerByDate, setTrackerByDate] = useState(() => ({ [getDateKey()]: buildDefaultDayData() }))
   const [pregnancyProfile, setPregnancyProfile] = useState({ week: '24', dueDate: '2027-04-18' })
   const [authError, setAuthError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -168,6 +269,18 @@ function App() {
   const [isRestoringSession, setIsRestoringSession] = useState(true)
   const daysLeft = getDaysUntil(pregnancyProfile.dueDate)
   const babySize = getBabySize(Number(pregnancyProfile.week) || 1)
+  const careProgress = calculateChecklistProgress(careChecklist)
+  const unreadNotifications = getUnreadNotificationCount(notifications)
+  const hospitalBagProgress = hospitalBag.length
+    ? Math.round((hospitalBag.filter((item) => item.packed).length / hospitalBag.length) * 100)
+    : 0
+  const openAppointmentQuestions = appointmentQuestions.filter((question) => !question.answered).length
+  const contractionDuration = activeContraction
+    ? formatDuration(Math.floor((contractionNow - activeContraction.startedAt) / 1000))
+    : '0:00'
+  const movementSessionDuration = activeMovementSession
+    ? formatDuration(Math.floor((contractionNow - activeMovementSession.startedAt) / 1000))
+    : '0:00'
   const orderedAppointments = [...appointmentData].sort((first, second) => (
     (first.dateValue || '9999-12-31').localeCompare(second.dateValue || '9999-12-31')
   ))
@@ -232,6 +345,189 @@ function App() {
     setAppointmentError('')
   }
 
+  const handleCareItemToggle = (itemId) => {
+    setCareChecklist((current) => toggleChecklistItem(current, itemId))
+  }
+
+  const handleCareChecklistSubmit = (event) => {
+    event.preventDefault()
+    const trimmed = careChecklistInput.trim()
+
+    if (!trimmed) {
+      return
+    }
+
+    setCareChecklist((current) => [
+      ...current,
+      { id: Date.now(), text: trimmed, checked: false },
+    ])
+    setCareChecklistInput('')
+  }
+
+  const handleHospitalBagSubmit = (event) => {
+    event.preventDefault()
+    const text = hospitalBagInput.trim()
+    if (!text) {
+      return
+    }
+
+    setHospitalBag((current) => [
+      ...current,
+      { id: Date.now(), category: hospitalBagCategory, text, packed: false },
+    ])
+    setHospitalBagInput('')
+  }
+
+  const handleAppointmentQuestionSubmit = (event) => {
+    event.preventDefault()
+    const text = appointmentQuestionInput.trim()
+    if (!text) {
+      return
+    }
+
+    setAppointmentQuestions((current) => [
+      { id: Date.now(), category: appointmentQuestionCategory, text, answered: false },
+      ...current,
+    ])
+    setAppointmentQuestionInput('')
+  }
+
+  const handleBabyNameSubmit = (event) => {
+    event.preventDefault()
+    const name = babyNameForm.name.trim()
+    if (!name) {
+      return
+    }
+
+    setBabyNames((current) => [
+      { id: Date.now(), name, note: babyNameForm.note.trim(), favorite: false },
+      ...current,
+    ])
+    setBabyNameForm({ name: '', note: '' })
+  }
+
+  const handleMealToggle = (mealId) => {
+    setMealPlan((current) => current.map((meal) => (
+      meal.id === mealId ? { ...meal, checked: !meal.checked } : meal
+    )))
+  }
+
+  const handleMedicationSubmit = (event) => {
+    event.preventDefault()
+    const { name, dose, time } = medicationForm
+    if (!name.trim() || !dose.trim() || !time) {
+      return
+    }
+
+    setMedications((current) => [
+      ...current,
+      { id: Date.now(), name: name.trim(), dose: dose.trim(), time, taken: false },
+    ])
+    setMedicationForm({ name: '', dose: '', time: '' })
+  }
+
+  const handleMedicationToggle = (medicationId) => {
+    setMedications((current) => current.map((medication) => (
+      medication.id === medicationId ? { ...medication, taken: !medication.taken } : medication
+    )))
+  }
+
+  const handleContractionStart = () => {
+    const startedAt = Date.now()
+    setContractionNow(startedAt)
+    setActiveContraction({ startedAt })
+  }
+
+  const handleMovementSessionStart = () => {
+    const startedAt = Date.now()
+    setContractionNow(startedAt)
+    setActiveMovementSession({ startedAt, count: 0 })
+  }
+
+  const handleMovementLog = () => {
+    setActiveMovementSession((current) => current && ({ ...current, count: current.count + 1 }))
+  }
+
+  const handleMovementSessionFinish = () => {
+    if (!activeMovementSession || activeMovementSession.count === 0) {
+      return
+    }
+
+    const endedAt = Date.now()
+    setMovementSessions((current) => [{
+      id: activeMovementSession.startedAt,
+      time: new Date(activeMovementSession.startedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+      count: activeMovementSession.count,
+      duration: Math.max(1, Math.round((endedAt - activeMovementSession.startedAt) / 1000)),
+    }, ...current])
+    setActiveMovementSession(null)
+  }
+
+  useEffect(() => {
+    if (!activeMovementSession) {
+      return undefined
+    }
+
+    const timer = window.setInterval(() => setContractionNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [activeMovementSession])
+
+  const handleContractionStop = () => {
+    if (!activeContraction) {
+      return
+    }
+
+    const endedAt = Date.now()
+    const durationSeconds = Math.max(1, Math.round((endedAt - activeContraction.startedAt) / 1000))
+    const previousContraction = contractionHistory[0]
+    const intervalSeconds = previousContraction
+      ? Math.max(0, Math.round((activeContraction.startedAt - previousContraction.startedAt) / 1000))
+      : null
+
+    setContractionHistory((current) => [{
+      id: activeContraction.startedAt,
+      startedAt: activeContraction.startedAt,
+      time: new Date(activeContraction.startedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+      duration: durationSeconds,
+      interval: intervalSeconds,
+    }, ...current])
+    setActiveContraction(null)
+  }
+
+  useEffect(() => {
+    if (!activeContraction) {
+      return undefined
+    }
+
+    const timer = window.setInterval(() => setContractionNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [activeContraction])
+
+  const handleNotificationRead = (notificationId) => {
+    setNotifications((current) => markNotificationAsRead(current, notificationId))
+  }
+
+  const handleDeleteNotification = (notificationId) => {
+    setNotifications((current) => current.filter((notification) => notification.id !== notificationId))
+  }
+
+  const handleMoodChange = (selectedMood) => {
+    const match = moodOptions.find((option) => option.value === selectedMood)
+    setMood({
+      value: match.value,
+      emoji: match.emoji,
+      text: match.value === 'Happy'
+        ? 'Feeling joyful and upbeat today.'
+        : match.value === 'Calm'
+          ? 'Feeling steady and relaxed today.'
+          : match.value === 'Tired'
+            ? 'A little tired, but still doing well.'
+            : match.value === 'Anxious'
+              ? 'Taking it one moment at a time today.'
+              : 'Feeling excited for what is ahead.',
+    })
+  }
+
   const handleProfileChange = (event) => {
     const { name, value } = event.target
     setPregnancyProfile((current) => ({ ...current, [name]: value }))
@@ -250,15 +546,57 @@ function App() {
         const user = await request('/me')
         const trackerData = await request('/tracker')
 
+        if (Array.isArray(trackerData.hospitalBag)) {
+          setHospitalBag(trackerData.hospitalBag)
+        }
+        if (Array.isArray(trackerData.appointmentQuestions)) {
+          setAppointmentQuestions(trackerData.appointmentQuestions)
+        }
+        if (Array.isArray(trackerData.babyNames)) {
+          setBabyNames(trackerData.babyNames)
+        }
+        if (trackerData.birthPreferences && typeof trackerData.birthPreferences === 'object') {
+          setBirthPreferences({ ...defaultBirthPreferences, ...trackerData.birthPreferences })
+        }
+
         setFormData((current) => ({ ...current, email: user.email || current.email }))
-        if (Array.isArray(trackerData.entries)) {
+
+        const savedMap = trackerData.trackerByDate || {}
+        if (Object.keys(savedMap).length > 0) {
+          setTrackerByDate(savedMap)
+          const firstDate = Object.keys(savedMap)[0]
+          setSelectedDate(firstDate)
+          const loadedDay = savedMap[firstDate] || buildDefaultDayData()
+          setEntries(loadedDay.entries || [])
+          setWaterCount(typeof loadedDay.waterCount === 'number' ? loadedDay.waterCount : 6)
+          setKickCount(typeof loadedDay.kickCount === 'number' ? loadedDay.kickCount : 8)
+          setMovementSessions(Array.isArray(loadedDay.movementSessions) ? loadedDay.movementSessions : [])
+          setContractionHistory(Array.isArray(loadedDay.contractions) ? loadedDay.contractions : [])
+          setSleepHours(typeof loadedDay.sleepHours === 'string' ? loadedDay.sleepHours : '7h 42m')
+          setNutritionData(Array.isArray(loadedDay.nutrition) ? loadedDay.nutrition : nutritionGoals)
+          setJournalData(Array.isArray(loadedDay.journal) ? loadedDay.journal : journalEntries)
+          setAppointmentData(Array.isArray(loadedDay.appointments) ? normalizeAppointments(loadedDay.appointments) : appointments)
+          setCareChecklist(Array.isArray(loadedDay.careChecklist) ? loadedDay.careChecklist : defaultCareChecklist)
+          setMealPlan(Array.isArray(loadedDay.meals) ? loadedDay.meals : defaultMealPlan)
+          setMedications(Array.isArray(loadedDay.medications) ? loadedDay.medications : defaultMedications)
+          setNotifications(Array.isArray(loadedDay.notifications) ? loadedDay.notifications : defaultNotifications)
+          setMood(loadedDay.mood || defaultMood)
+          setPregnancyProfile(loadedDay.profile || { week: '24', dueDate: '2027-04-18' })
+        } else if (Array.isArray(trackerData.entries)) {
           setEntries(trackerData.entries)
         }
+
         if (typeof trackerData.waterCount === 'number') {
           setWaterCount(trackerData.waterCount)
         }
         if (typeof trackerData.kickCount === 'number') {
           setKickCount(trackerData.kickCount)
+        }
+        if (Array.isArray(trackerData.movementSessions)) {
+          setMovementSessions(trackerData.movementSessions)
+        }
+        if (Array.isArray(trackerData.contractions)) {
+          setContractionHistory(trackerData.contractions)
         }
         if (typeof trackerData.sleepHours === 'string') {
           setSleepHours(trackerData.sleepHours)
@@ -271,6 +609,21 @@ function App() {
         }
         if (Array.isArray(trackerData.appointments)) {
           setAppointmentData(normalizeAppointments(trackerData.appointments))
+        }
+        if (Array.isArray(trackerData.careChecklist)) {
+          setCareChecklist(trackerData.careChecklist)
+        }
+        if (Array.isArray(trackerData.meals)) {
+          setMealPlan(trackerData.meals)
+        }
+        if (Array.isArray(trackerData.medications)) {
+          setMedications(trackerData.medications)
+        }
+        if (Array.isArray(trackerData.notifications)) {
+          setNotifications(trackerData.notifications)
+        }
+        if (trackerData.mood) {
+          setMood(trackerData.mood)
         }
         if (trackerData.profile) {
           setPregnancyProfile((current) => ({ ...current, ...trackerData.profile }))
@@ -313,14 +666,55 @@ function App() {
       sessionStorage.setItem('pregnancy_tracker_token', loginResponse.token)
       const trackerData = await request('/tracker')
 
-      if (Array.isArray(trackerData.entries)) {
+      if (Array.isArray(trackerData.hospitalBag)) {
+        setHospitalBag(trackerData.hospitalBag)
+      }
+      if (Array.isArray(trackerData.appointmentQuestions)) {
+        setAppointmentQuestions(trackerData.appointmentQuestions)
+      }
+      if (Array.isArray(trackerData.babyNames)) {
+        setBabyNames(trackerData.babyNames)
+      }
+      if (trackerData.birthPreferences && typeof trackerData.birthPreferences === 'object') {
+        setBirthPreferences({ ...defaultBirthPreferences, ...trackerData.birthPreferences })
+      }
+
+      const savedMap = trackerData.trackerByDate || {}
+      if (Object.keys(savedMap).length > 0) {
+        setTrackerByDate(savedMap)
+        const firstDate = Object.keys(savedMap)[0]
+        setSelectedDate(firstDate)
+        const loadedDay = savedMap[firstDate] || buildDefaultDayData()
+        setEntries(loadedDay.entries || [])
+        setWaterCount(typeof loadedDay.waterCount === 'number' ? loadedDay.waterCount : 6)
+        setKickCount(typeof loadedDay.kickCount === 'number' ? loadedDay.kickCount : 8)
+        setMovementSessions(Array.isArray(loadedDay.movementSessions) ? loadedDay.movementSessions : [])
+        setContractionHistory(Array.isArray(loadedDay.contractions) ? loadedDay.contractions : [])
+        setSleepHours(typeof loadedDay.sleepHours === 'string' ? loadedDay.sleepHours : '7h 42m')
+        setNutritionData(Array.isArray(loadedDay.nutrition) ? loadedDay.nutrition : nutritionGoals)
+        setJournalData(Array.isArray(loadedDay.journal) ? loadedDay.journal : journalEntries)
+        setAppointmentData(Array.isArray(loadedDay.appointments) ? normalizeAppointments(loadedDay.appointments) : appointments)
+        setCareChecklist(Array.isArray(loadedDay.careChecklist) ? loadedDay.careChecklist : defaultCareChecklist)
+        setMealPlan(Array.isArray(loadedDay.meals) ? loadedDay.meals : defaultMealPlan)
+        setMedications(Array.isArray(loadedDay.medications) ? loadedDay.medications : defaultMedications)
+        setNotifications(Array.isArray(loadedDay.notifications) ? loadedDay.notifications : defaultNotifications)
+        setMood(loadedDay.mood || defaultMood)
+        setPregnancyProfile(loadedDay.profile || { week: '24', dueDate: '2027-04-18' })
+      } else if (Array.isArray(trackerData.entries)) {
         setEntries(trackerData.entries)
       }
+
       if (typeof trackerData.waterCount === 'number') {
         setWaterCount(trackerData.waterCount)
       }
       if (typeof trackerData.kickCount === 'number') {
         setKickCount(trackerData.kickCount)
+      }
+      if (Array.isArray(trackerData.movementSessions)) {
+        setMovementSessions(trackerData.movementSessions)
+      }
+      if (Array.isArray(trackerData.contractions)) {
+        setContractionHistory(trackerData.contractions)
       }
       if (typeof trackerData.sleepHours === 'string') {
         setSleepHours(trackerData.sleepHours)
@@ -333,6 +727,21 @@ function App() {
       }
       if (Array.isArray(trackerData.appointments)) {
         setAppointmentData(normalizeAppointments(trackerData.appointments))
+      }
+      if (Array.isArray(trackerData.careChecklist)) {
+        setCareChecklist(trackerData.careChecklist)
+      }
+      if (Array.isArray(trackerData.meals)) {
+        setMealPlan(trackerData.meals)
+      }
+      if (Array.isArray(trackerData.medications)) {
+        setMedications(trackerData.medications)
+      }
+      if (Array.isArray(trackerData.notifications)) {
+        setNotifications(trackerData.notifications)
+      }
+      if (trackerData.mood) {
+        setMood(trackerData.mood)
       }
       if (trackerData.profile) {
         setPregnancyProfile((current) => ({ ...current, ...trackerData.profile }))
@@ -348,6 +757,54 @@ function App() {
   }
 
   useEffect(() => {
+    const currentDayData = {
+      entries,
+      waterCount,
+      kickCount,
+      movementSessions,
+      contractions: contractionHistory,
+      sleepHours,
+      nutrition: nutritionData,
+      journal: journalData,
+      appointments: appointmentData,
+      careChecklist,
+      meals: mealPlan,
+      medications,
+      notifications,
+      mood,
+      profile: pregnancyProfile,
+    }
+
+    setTrackerByDate((current) => ({
+      ...current,
+      [selectedDate]: currentDayData,
+    }))
+  }, [selectedDate, entries, waterCount, kickCount, movementSessions, contractionHistory, sleepHours, nutritionData, journalData, appointmentData, careChecklist, mealPlan, medications, notifications, mood, pregnancyProfile])
+
+  useEffect(() => {
+    const loadSelectedDay = () => {
+      const selectedDay = trackerByDate[selectedDate] || buildDefaultDayData()
+      setEntries(selectedDay.entries || [])
+      setWaterCount(typeof selectedDay.waterCount === 'number' ? selectedDay.waterCount : 6)
+      setKickCount(typeof selectedDay.kickCount === 'number' ? selectedDay.kickCount : 8)
+      setMovementSessions(Array.isArray(selectedDay.movementSessions) ? selectedDay.movementSessions : [])
+      setContractionHistory(Array.isArray(selectedDay.contractions) ? selectedDay.contractions : [])
+      setSleepHours(typeof selectedDay.sleepHours === 'string' ? selectedDay.sleepHours : '7h 42m')
+      setNutritionData(Array.isArray(selectedDay.nutrition) ? selectedDay.nutrition : nutritionGoals)
+      setJournalData(Array.isArray(selectedDay.journal) ? selectedDay.journal : journalEntries)
+      setAppointmentData(Array.isArray(selectedDay.appointments) ? normalizeAppointments(selectedDay.appointments) : appointments)
+      setCareChecklist(Array.isArray(selectedDay.careChecklist) ? selectedDay.careChecklist : defaultCareChecklist)
+      setMealPlan(Array.isArray(selectedDay.meals) ? selectedDay.meals : defaultMealPlan)
+      setMedications(Array.isArray(selectedDay.medications) ? selectedDay.medications : defaultMedications)
+      setNotifications(Array.isArray(selectedDay.notifications) ? selectedDay.notifications : defaultNotifications)
+      setMood(selectedDay.mood || defaultMood)
+      setPregnancyProfile(selectedDay.profile || { week: '24', dueDate: '2027-04-18' })
+    }
+
+    loadSelectedDay()
+  }, [selectedDate])
+
+  useEffect(() => {
     if (!isAuthenticated || !isDataLoaded) {
       return
     }
@@ -357,7 +814,7 @@ function App() {
         setSyncError('')
         await request('/tracker', {
           method: 'PUT',
-          body: JSON.stringify({ entries, waterCount, kickCount, sleepHours, nutrition: nutritionData, journal: journalData, appointments: appointmentData, profile: pregnancyProfile }),
+          body: JSON.stringify({ trackerByDate, hospitalBag, appointmentQuestions, babyNames, birthPreferences }),
         })
       } catch (error) {
         setSyncError('Your latest tracker update could not be saved.')
@@ -365,7 +822,7 @@ function App() {
     }
 
     saveTrackerData()
-  }, [entries, waterCount, kickCount, sleepHours, nutritionData, journalData, appointmentData, pregnancyProfile, isAuthenticated, isDataLoaded])
+  }, [trackerByDate, hospitalBag, appointmentQuestions, babyNames, birthPreferences, isAuthenticated, isDataLoaded])
 
   const handleAddEntry = (event) => {
     event.preventDefault()
@@ -523,6 +980,56 @@ function App() {
         </div>
 
         <div className="topbar-actions">
+          <div className="notification-popover-wrap">
+            <button
+              type="button"
+              className="notification-bell"
+              onClick={() => setShowNotifications((visible) => !visible)}
+              aria-label="Show notifications"
+            >
+              🔔
+              {unreadNotifications > 0 && <span className="notification-badge">{unreadNotifications}</span>}
+            </button>
+
+            {showNotifications && (
+              <div className="notification-popover">
+                <div className="notification-popover-head">
+                  <h3>Alerts</h3>
+                  <button type="button" className="close-popover" onClick={() => setShowNotifications(false)} aria-label="Close notifications">
+                    ×
+                  </button>
+                </div>
+
+                {notifications.length === 0 ? (
+                  <p className="empty-notification">No alerts right now</p>
+                ) : (
+                  notifications.map((notification) => (
+                    <div key={notification.id} className={notification.read ? 'notification-item read' : 'notification-item'}>
+                      <div className="notification-copy">
+                        <strong>{notification.title}</strong>
+                        <p>{notification.detail}</p>
+                      </div>
+
+                      <div className="notification-meta">
+                        <span>{notification.time}</span>
+                        <div className="notification-actions">
+                          {!notification.read && (
+                            <button type="button" className="inline-btn" onClick={() => handleNotificationRead(notification.id)}>
+                              Read
+                            </button>
+                          )}
+                          <button type="button" className="delete-btn" onClick={() => handleDeleteNotification(notification.id)} aria-label={`Delete ${notification.title}`}>
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
           <span className="welcome-tag">Hi, {formData.name || 'Mom'}</span>
           <button
             type="button"
@@ -581,6 +1088,10 @@ function App() {
             <span>Saved to your account</span>
           </div>
           <div className="profile-form">
+            <label>
+              Date
+              <input type="date" value={selectedDate} disabled={Boolean(activeContraction || activeMovementSession)} onChange={(event) => setSelectedDate(getDateKey(event.target.value))} />
+            </label>
             <label>
               Current week
               <input name="week" type="number" min="1" max="42" value={pregnancyProfile.week} onChange={handleProfileChange} />
@@ -748,6 +1259,62 @@ function App() {
               </div>
               {appointmentError && <p className="form-error" role="alert">{appointmentError}</p>}
             </form>
+
+            <div className="appointment-questions">
+              <div className="appointment-questions-head">
+                <h4>Questions for your provider</h4>
+                <span>{openAppointmentQuestions} open</span>
+              </div>
+              {appointmentQuestions.length === 0 ? (
+                <p className="appointment-questions-empty">Save questions here before your next visit.</p>
+              ) : (
+                <ul className="appointment-question-list">
+                  {appointmentQuestions.map((question) => (
+                    <li key={question.id} className={question.answered ? 'appointment-question answered' : 'appointment-question'}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={question.answered}
+                          onChange={() => setAppointmentQuestions((current) => current.map((item) => (
+                            item.id === question.id ? { ...item, answered: !item.answered } : item
+                          )))}
+                        />
+                        <span>
+                          <small>{question.category}</small>
+                          {question.text}
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        className="medication-remove"
+                        aria-label={`Remove question: ${question.text}`}
+                        onClick={() => setAppointmentQuestions((current) => current.filter((item) => item.id !== question.id))}
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <form className="appointment-question-form" onSubmit={handleAppointmentQuestionSubmit}>
+                <input
+                  type="text"
+                  value={appointmentQuestionInput}
+                  onChange={(event) => setAppointmentQuestionInput(event.target.value)}
+                  placeholder="What would you like to ask?"
+                  aria-label="Question for your provider"
+                  required
+                />
+                <select
+                  value={appointmentQuestionCategory}
+                  onChange={(event) => setAppointmentQuestionCategory(event.target.value)}
+                  aria-label="Question category"
+                >
+                  {appointmentQuestionCategories.map((category) => <option key={category}>{category}</option>)}
+                </select>
+                <button type="submit" className="secondary-btn">Add question</button>
+              </form>
+            </div>
           </div>
         </section>
 
@@ -755,18 +1322,337 @@ function App() {
           <aside className="panel checklist-panel">
             <div className="panel-head">
               <h3>Today’s care</h3>
-              <span>4 items</span>
+              <span>{careChecklist.filter((item) => item.checked).length}/{careChecklist.length} done</span>
             </div>
-            <ul>
-              {checklist.map((item) => (
-                <li key={item}>
-                  <input type="checkbox" defaultChecked={item.includes('water') || item.includes('vitamin')} />
-                  <span>{item}</span>
+
+            <div className="care-progress">
+              <div className="care-progress-bar" style={{ width: `${careProgress}%` }} />
+            </div>
+
+            <ul className="checklist-list">
+              {careChecklist.map((item) => (
+                <li key={item.id}>
+                  <label className="checklist-item">
+                    <input
+                      type="checkbox"
+                      checked={item.checked}
+                      onChange={() => handleCareItemToggle(item.id)}
+                    />
+                    <span>{item.text}</span>
+                  </label>
                 </li>
               ))}
             </ul>
-          </aside>
 
+            <form className="care-form" onSubmit={handleCareChecklistSubmit}>
+              <input
+                type="text"
+                value={careChecklistInput}
+                onChange={(event) => setCareChecklistInput(event.target.value)}
+                placeholder="Add a new care reminder"
+                aria-label="Add care reminder"
+              />
+              <button type="submit" className="secondary-btn">Add</button>
+            </form>
+          </aside>
+        </section>
+
+        <section className="panel hospital-bag-panel">
+          <div className="panel-head">
+            <h3>Hospital bag</h3>
+            <span>{hospitalBag.filter((item) => item.packed).length}/{hospitalBag.length} packed</span>
+          </div>
+          <div className="care-progress" role="progressbar" aria-label="Hospital bag packing progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={hospitalBagProgress}>
+            <div className="care-progress-bar" style={{ width: `${hospitalBagProgress}%` }} />
+          </div>
+
+          <div className="hospital-bag-groups">
+            {hospitalBagCategories.map((category) => {
+              const categoryItems = hospitalBag.filter((item) => item.category === category)
+              if (!categoryItems.length) {
+                return null
+              }
+
+              return (
+                <div className="hospital-bag-group" key={category}>
+                  <h4>{category}</h4>
+                  <ul className="hospital-bag-list">
+                    {categoryItems.map((item) => (
+                      <li key={item.id} className={item.packed ? 'hospital-bag-item packed' : 'hospital-bag-item'}>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={item.packed}
+                            onChange={() => setHospitalBag((current) => current.map((entry) => (
+                              entry.id === item.id ? { ...entry, packed: !entry.packed } : entry
+                            )))}
+                          />
+                          <span>{item.text}</span>
+                        </label>
+                        <button
+                          type="button"
+                          className="medication-remove"
+                          aria-label={`Remove ${item.text}`}
+                          onClick={() => setHospitalBag((current) => current.filter((entry) => entry.id !== item.id))}
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )
+            })}
+          </div>
+
+          <form className="hospital-bag-form" onSubmit={handleHospitalBagSubmit}>
+            <input
+              type="text"
+              value={hospitalBagInput}
+              onChange={(event) => setHospitalBagInput(event.target.value)}
+              placeholder="Add an item"
+              aria-label="Hospital bag item"
+              required
+            />
+            <select
+              value={hospitalBagCategory}
+              onChange={(event) => setHospitalBagCategory(event.target.value)}
+              aria-label="Item category"
+            >
+              {hospitalBagCategories.map((category) => <option key={category}>{category}</option>)}
+            </select>
+            <button type="submit" className="secondary-btn">Add item</button>
+          </form>
+        </section>
+
+        <section className="panel baby-names-panel">
+          <div className="panel-head">
+            <h3>Baby name shortlist</h3>
+            <span>{babyNames.length} {babyNames.length === 1 ? 'name' : 'names'}</span>
+          </div>
+
+          <form className="baby-name-form" onSubmit={handleBabyNameSubmit}>
+            <input
+              type="text"
+              value={babyNameForm.name}
+              onChange={(event) => setBabyNameForm((current) => ({ ...current, name: event.target.value }))}
+              placeholder="Add a name"
+              aria-label="Baby name"
+              required
+            />
+            <input
+              type="text"
+              value={babyNameForm.note}
+              onChange={(event) => setBabyNameForm((current) => ({ ...current, note: event.target.value }))}
+              placeholder="Optional note or meaning"
+              aria-label="Note or meaning"
+            />
+            <button type="submit" className="secondary-btn">Add name</button>
+          </form>
+
+          {babyNames.length === 0 ? (
+            <p className="baby-names-empty">Your saved names will appear here.</p>
+          ) : (
+            <ul className="baby-name-list">
+              {[...babyNames].sort((first, second) => Number(second.favorite) - Number(first.favorite)).map((item) => (
+                <li key={item.id} className="baby-name-item">
+                  <div className="baby-name-copy">
+                    <strong>{item.name}</strong>
+                    {item.note && <p>{item.note}</p>}
+                  </div>
+                  <div className="baby-name-actions">
+                    <button
+                      type="button"
+                      className={item.favorite ? 'baby-name-favorite active' : 'baby-name-favorite'}
+                      aria-label={item.favorite ? `Remove ${item.name} from favorites` : `Favorite ${item.name}`}
+                      aria-pressed={item.favorite}
+                      onClick={() => setBabyNames((current) => current.map((name) => (
+                        name.id === item.id ? { ...name, favorite: !name.favorite } : name
+                      )))}
+                    >
+                      {item.favorite ? 'Favorite' : 'Mark favorite'}
+                    </button>
+                    <button
+                      type="button"
+                      className="medication-remove"
+                      aria-label={`Remove ${item.name}`}
+                      onClick={() => setBabyNames((current) => current.filter((name) => name.id !== item.id))}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="panel birth-preferences-panel">
+          <div className="panel-head">
+            <h3>Birth preferences</h3>
+            <span>Saved to your account</span>
+          </div>
+          <div className="birth-preferences-grid">
+            <label>
+              Support person
+              <input
+                type="text"
+                value={birthPreferences.supportPerson}
+                onChange={(event) => setBirthPreferences((current) => ({ ...current, supportPerson: event.target.value }))}
+                placeholder="Name"
+              />
+            </label>
+            <label>
+              Feeding plan
+              <select
+                value={birthPreferences.feedingPlan}
+                onChange={(event) => setBirthPreferences((current) => ({ ...current, feedingPlan: event.target.value }))}
+              >
+                <option>Undecided</option>
+                <option>Breastfeeding</option>
+                <option>Formula feeding</option>
+                <option>Combination feeding</option>
+                <option>Other</option>
+              </select>
+            </label>
+            <label>
+              Labor preferences
+              <textarea
+                value={birthPreferences.laborPreferences}
+                onChange={(event) => setBirthPreferences((current) => ({ ...current, laborPreferences: event.target.value }))}
+                placeholder="Comfort preferences or requests"
+                rows="3"
+              />
+            </label>
+            <label>
+              Additional notes
+              <textarea
+                value={birthPreferences.notes}
+                onChange={(event) => setBirthPreferences((current) => ({ ...current, notes: event.target.value }))}
+                placeholder="Anything you want to remember"
+                rows="3"
+              />
+            </label>
+          </div>
+        </section>
+
+        <section className="panel mood-panel">
+          <div className="panel-head">
+            <h3>Daily mood</h3>
+            <span>Today</span>
+          </div>
+
+          <div className="mood-summary">
+            <div className="mood-emoji" aria-label={`Current mood ${mood.value}`}>{mood.emoji}</div>
+            <div>
+              <strong>{mood.value}</strong>
+              <p>{mood.text}</p>
+            </div>
+          </div>
+
+          <div className="mood-options">
+            {moodOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={mood.value === option.value ? 'mood-option active' : 'mood-option'}
+                onClick={() => handleMoodChange(option.value)}
+              >
+                <span>{option.emoji}</span>
+                {option.value}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="panel meal-panel">
+          <div className="panel-head">
+            <h3>Meal planner</h3>
+            <span>{mealPlan.filter((meal) => meal.checked).length}/{mealPlan.length} planned</span>
+          </div>
+
+          <div className="meal-list">
+            {mealPlan.map((meal) => (
+              <button
+                key={meal.id}
+                type="button"
+                className={meal.checked ? 'meal-item checked' : 'meal-item'}
+                onClick={() => handleMealToggle(meal.id)}
+              >
+                <div>
+                  <span className="meal-title">{meal.title}</span>
+                  <strong>{meal.meal}</strong>
+                </div>
+                <span className="meal-status">{meal.checked ? 'Done' : 'Plan'}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="panel medication-panel">
+          <div className="panel-head">
+            <h3>Medication & vitamins</h3>
+            <span>{medications.filter((item) => item.taken).length}/{medications.length} taken</span>
+          </div>
+
+          {medications.length === 0 ? (
+            <p className="medication-empty">No medication reminders for this date.</p>
+          ) : (
+            <ul className="medication-list">
+              {medications.map((medication) => (
+                <li key={medication.id} className={medication.taken ? 'medication-item taken' : 'medication-item'}>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={medication.taken}
+                      onChange={() => handleMedicationToggle(medication.id)}
+                    />
+                    <span className="medication-details">
+                      <strong>{medication.name}</strong>
+                      <small>{medication.dose} · {medication.time}</small>
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    className="medication-remove"
+                    aria-label={`Remove ${medication.name}`}
+                    onClick={() => setMedications((current) => current.filter((item) => item.id !== medication.id))}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <form className="medication-form" onSubmit={handleMedicationSubmit}>
+            <input
+              type="text"
+              value={medicationForm.name}
+              onChange={(event) => setMedicationForm((current) => ({ ...current, name: event.target.value }))}
+              placeholder="Medication or vitamin"
+              aria-label="Medication or vitamin name"
+              required
+            />
+            <input
+              type="text"
+              value={medicationForm.dose}
+              onChange={(event) => setMedicationForm((current) => ({ ...current, dose: event.target.value }))}
+              placeholder="Dose, e.g. 1 tablet"
+              aria-label="Medication dose"
+              required
+            />
+            <div className="medication-form-row">
+              <input
+                type="time"
+                value={medicationForm.time}
+                onChange={(event) => setMedicationForm((current) => ({ ...current, time: event.target.value }))}
+                aria-label="Scheduled time"
+                required
+              />
+              <button type="submit" className="secondary-btn">Add reminder</button>
+            </div>
+          </form>
         </section>
 
         <section className="nutrition-journal-grid">
@@ -887,6 +1773,72 @@ function App() {
             <div className="kick-dots" aria-label={`${kickCount} kicks logged`}>
               {Array.from({ length: Math.min(kickCount, 12) }, (_, index) => <span key={index} />)}
             </div>
+            <div className="movement-session">
+              <div className="movement-session-head">
+                <strong>Timed session</strong>
+                {activeMovementSession && <span>{movementSessionDuration} · {activeMovementSession.count} movements</span>}
+              </div>
+              {activeMovementSession ? (
+                <div className="movement-session-controls">
+                  <button type="button" className="movement-tap-button" onClick={handleMovementLog}>Log movement</button>
+                  <button
+                    type="button"
+                    className="movement-finish-button"
+                    onClick={handleMovementSessionFinish}
+                    disabled={activeMovementSession.count === 0}
+                  >
+                    Finish session
+                  </button>
+                </div>
+              ) : (
+                <button type="button" className="movement-start-button" disabled={Boolean(activeContraction)} onClick={handleMovementSessionStart}>
+                  Start session
+                </button>
+              )}
+              {movementSessions.length > 0 && (
+                <ul className="movement-session-list">
+                  {movementSessions.slice(0, 3).map((session) => (
+                    <li key={session.id}>
+                      <span>{session.time}</span>
+                      <strong>{session.count} movements</strong>
+                      <small>{formatDuration(session.duration)}</small>
+                      <button
+                        type="button"
+                        aria-label={`Remove movement session at ${session.time}`}
+                        onClick={() => setMovementSessions((current) => current.filter((item) => item.id !== session.id))}
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          <div className="panel contraction-panel">
+            <div className="panel-head">
+              <h3>Contraction timer</h3>
+              <span>{contractionHistory.length} logged</span>
+            </div>
+            <div className="contraction-clock" aria-live="polite">{contractionDuration}</div>
+            <button
+              type="button"
+              className={activeContraction ? 'contraction-button active' : 'contraction-button'}
+              disabled={!activeContraction && Boolean(activeMovementSession)}
+              onClick={activeContraction ? handleContractionStop : handleContractionStart}
+            >
+              {activeContraction ? 'Stop contraction' : 'Start contraction'}
+            </button>
+            <ul className="contraction-list">
+              {contractionHistory.slice(0, 4).map((contraction) => (
+                <li key={contraction.id}>
+                  <span>{contraction.time}</span>
+                  <strong>{formatDuration(contraction.duration)}</strong>
+                  <small>{contraction.interval === null ? 'First' : `${formatDuration(contraction.interval)} apart`}</small>
+                </li>
+              ))}
+            </ul>
           </div>
 
           <div className="panel sleep-panel">
