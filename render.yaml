@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: pregnancy-tracker-api
+    runtime: docker
+    rootDir: pregnancy-tracker
+    dockerfilePath: ./Dockerfile
+    dockerContext: ./
+    envVars:
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: JWT_SECRET
+        sync: false

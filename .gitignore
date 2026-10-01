@@ -1,0 +1,16 @@
+# Frontend dependencies and build output
+pregnancy_tracker_F/node_modules/
+pregnancy_tracker_F/dist/
+pregnancy_tracker_F/.env
+pregnancy_tracker_F/.env.*
+!pregnancy_tracker_F/.env.example
+
+# Spring Boot build output
+pregnancy-tracker/target/
+
+# IDE and OS files
+.vscode/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
