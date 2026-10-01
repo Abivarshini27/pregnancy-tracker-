@@ -9,5 +9,3 @@ services:
     envVars:
       - key: FRONTEND_ORIGIN
         sync: false
-      - key: JWT_SECRET
-        sync: false
