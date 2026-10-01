@@ -2,6 +2,7 @@ services:
   - type: web
     name: pregnancy-tracker-api
     runtime: docker
+    plan: free
     rootDir: pregnancy-tracker
     dockerfilePath: ./Dockerfile
     dockerContext: ./
